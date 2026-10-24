@@ -32,6 +32,8 @@ data structures, and problem solutions from various online judges.
 
 ## Compiling and Running
 
+I've configured the .ps1 script to be executed globally from the terminal with the command name "runcpp"
+
 From the repository root, run:
 
 ```powershell
