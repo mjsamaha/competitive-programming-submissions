@@ -1,0 +1,30 @@
+# Compiled executables
+*.exe
+*.out
+*.o
+*.obj
+
+# Debug symbols
+*.pdb
+*.ilk
+
+# Temporary files
+*.tmp
+*.temp
+*.bak
+*.swp
+*.swo
+
+# Editor and IDE files
+.vscode/
+.idea/
+*.sublime-workspace
+
+# Operating system files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Other
+info.txt
+info.md
