@@ -1,3 +1,4 @@
+
 [CmdletBinding()]
 param(
     [Parameter(Position = 0)]
@@ -16,9 +17,8 @@ $ErrorActionPreference = 'Stop'
 # Automated Git add, commit, and push utility
 # ============================================================
 
-$script:AppName    = 'GI'
-$script:Version    = '1.0.0'
-$script:ExitCode   = 0
+$script:AppName  = 'GI'
+$script:Version = '1.1.0'
 
 # ------------------------------------------------------------
 # Console UI
@@ -28,19 +28,16 @@ function Write-Header {
     Clear-Host
 
     Write-Host ''
-    Write-Host '  +--------------------------------------------------+' `
-        -ForegroundColor DarkCyan
-    Write-Host '  |  GI  /  GIT INTEGRATION                          |' `
-        -ForegroundColor Cyan
-    Write-Host '  |  Automated Git workflow                          |' `
-        -ForegroundColor DarkCyan
-    Write-Host '  +--------------------------------------------------+' `
-        -ForegroundColor DarkCyan
+    Write-Host '  +--------------------------------------------------+' -ForegroundColor DarkCyan
+    Write-Host '  |  GI  /  GIT INTEGRATION                          |' -ForegroundColor Cyan
+    Write-Host '  |  Automated Git workflow                          |' -ForegroundColor DarkCyan
+    Write-Host '  +--------------------------------------------------+' -ForegroundColor DarkCyan
     Write-Host ''
+    Write-Host '  Author: lobsterchops'
 }
 
 function Write-Section {
-    param([string]$Title)
+    param([Parameter(Mandatory)][string]$Title)
 
     Write-Host ''
     Write-Host "  $Title" -ForegroundColor Cyan
@@ -49,19 +46,18 @@ function Write-Section {
 
 function Write-Info {
     param(
-        [string]$Label,
-        [string]$Value
+        [Parameter(Mandatory)][string]$Label,
+        [AllowEmptyString()][string]$Value = ''
     )
 
-    Write-Host '  '
-    Write-Host "  $Label".PadRight(15) -NoNewline `
-        -ForegroundColor DarkGray
+    Write-Host '  ' -NoNewline
+    Write-Host $Label.PadRight(15) -NoNewline -ForegroundColor DarkGray
     Write-Host $Value -ForegroundColor White
 }
 
 function Write-Status {
     param(
-        [string]$Message,
+        [Parameter(Mandatory)][string]$Message,
         [ValidateSet('OK', 'WARN', 'FAIL', 'INFO')]
         [string]$Status = 'INFO'
     )
@@ -74,20 +70,33 @@ function Write-Status {
     }
 
     $symbol = switch ($Status) {
-        'OK'   { '[OK]' }
-        'WARN' { '[!!]' }
-        'FAIL' { '[FAIL]' }
-        'INFO' { '[..]' }
+        'OK'   { '[OK]  ' }
+        'WARN' { '[!!]  ' }
+        'FAIL' { '[FAIL] ' }
+        'INFO' { '[..]  ' }
     }
 
-    Write-Host "  $symbol " -ForegroundColor $color -NoNewline
+    Write-Host "  $symbol" -ForegroundColor $color -NoNewline
     Write-Host $Message -ForegroundColor Gray
 }
 
 function Write-Fatal {
-    param([string]$Message)
+    param([Parameter(Mandatory)][string]$Message)
 
-    Write-Status $Message 'FAIL'
+    $lines = @($Message -split '\r?\n')
+
+    if ($lines.Count -gt 0) {
+        Write-Status $lines[0] 'FAIL'
+
+        foreach ($line in ($lines | Select-Object -Skip 1)) {
+            if (-not [string]::IsNullOrWhiteSpace($line)) {
+                Write-Host "         $line" -ForegroundColor Red
+            }
+        }
+    }
+
+    Write-Host ''
+    Write-Host '  Workflow stopped. Review the error above.' -ForegroundColor Yellow
     exit 1
 }
 
@@ -95,21 +104,21 @@ function Show-Help {
     Write-Header
 
     Write-Host '  USAGE' -ForegroundColor Cyan
-    Write-Host '    gi <commit-message>'
+    Write-Host '    gip <commit-message>'
     Write-Host ''
     Write-Host '  OPTIONS' -ForegroundColor Cyan
     Write-Host '    -Help       Display this help message'
-    Write-Host '    -DryRun     Preview the workflow without changes'
+    Write-Host '    -DryRun     Preview changes without modifying Git state'
     Write-Host ''
     Write-Host '  EXAMPLES' -ForegroundColor Cyan
-    Write-Host '    gi "Add binary search implementation"'
-    Write-Host '    gi "Fix input validation" -DryRun'
-    Write-Host '    gi -Help'
+    Write-Host '    gip "Add binary search implementation"'
+    Write-Host '    gip "Fix input validation" -DryRun'
+    Write-Host '    gip -Help'
     Write-Host ''
     Write-Host '  WORKFLOW' -ForegroundColor Cyan
     Write-Host '    1. Inspect the repository'
-    Write-Host '    2. Stage changes'
-    Write-Host '    3. Commit changes'
+    Write-Host '    2. Stage all changes'
+    Write-Host '    3. Create a commit'
     Write-Host '    4. Push to the remote repository'
     Write-Host ''
     Write-Host "  GI v$script:Version" -ForegroundColor DarkGray
@@ -125,23 +134,61 @@ function Invoke-Git {
         [string[]]$GitArgs
     )
 
-    # Execute Git without invoking a PowerShell alias or function.
-    $output = & git @GitArgs 2>&1
-    $exitCode = $LASTEXITCODE
+    # PowerShell 7.3+ can convert native stderr into terminating
+    # errors when native-command error preference is enabled.
+    # Temporarily disable that behavior so we can inspect Git's
+    # actual exit code and capture the complete diagnostic output.
+
+    $hasNativePreference = Test-Path variable:PSNativeCommandUseErrorActionPreference
+    $previousNativePreference = $false
+
+    if ($hasNativePreference) {
+        $previousNativePreference = $PSNativeCommandUseErrorActionPreference
+        $PSNativeCommandUseErrorActionPreference = $false
+    }
+
+    try {
+        $output = @(& git @GitArgs 2>&1)
+        $exitCode = $LASTEXITCODE
+    }
+    catch {
+        throw "Unable to execute Git.`n$($_.Exception.Message)"
+    }
+    finally {
+        if ($hasNativePreference) {
+            $PSNativeCommandUseErrorActionPreference = $previousNativePreference
+        }
+    }
+
+    $lines = @(
+        $output | ForEach-Object {
+            if ($null -ne $_) {
+                $_.ToString()
+            }
+        }
+    )
 
     if ($exitCode -ne 0) {
-        $details = ($output | ForEach-Object {
-            "$_"
-        }) -join [Environment]::NewLine
+        $details = $lines -join [Environment]::NewLine
 
         if ([string]::IsNullOrWhiteSpace($details)) {
             $details = "Git exited with code $exitCode."
         }
 
-        throw "git $($GitArgs -join ' ') failed.`n$details"
+        throw "git $($GitArgs -join ' ') failed (exit code $exitCode).`n$details"
     }
 
-    return $output
+    return $lines
+}
+
+function Show-GitOutput {
+    param([AllowNull()][object[]]$Lines)
+
+    foreach ($line in $Lines) {
+        if (-not [string]::IsNullOrWhiteSpace("$line")) {
+            Write-Host "         $line" -ForegroundColor DarkGray
+        }
+    }
 }
 
 # ------------------------------------------------------------
@@ -160,8 +207,8 @@ Write-Header
 if ([string]::IsNullOrWhiteSpace($Message)) {
     Write-Host '  A commit message is required.' -ForegroundColor Yellow
     Write-Host ''
-    Write-Host '  Usage: gi "Your commit message"' -ForegroundColor Gray
-    Write-Host '  Help:  gi -Help' -ForegroundColor Gray
+    Write-Host '  Usage: gip "Your commit message"' -ForegroundColor Gray
+    Write-Host '  Help:  gip -Help' -ForegroundColor Gray
     exit 1
 }
 
@@ -169,28 +216,32 @@ if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
     Write-Fatal 'Git was not found. Install Git or check your PATH.'
 }
 
-# Locate the repository from the current directory.
+# Locate repository root.
+
 try {
-    $repoRoot = (Invoke-Git -GitArgs @(
-        'rev-parse', '--show-toplevel'
-    ) | Select-Object -Last 1).ToString().Trim()
+    $repoRoot = (
+        Invoke-Git -GitArgs @('rev-parse', '--show-toplevel') |
+        Select-Object -Last 1
+    ).ToString().Trim()
 }
 catch {
     Write-Fatal 'The current directory is not inside a Git repository.'
 }
 
-# Resolve branch and remote.
+# Resolve current branch and configured remote.
+
 try {
-    $branch = (Invoke-Git -GitArgs @(
-        'branch', '--show-current'
-    ) | Select-Object -Last 1).ToString().Trim()
+    $branch = (
+        Invoke-Git -GitArgs @('branch', '--show-current') |
+        Select-Object -Last 1
+    ).ToString().Trim()
 
-    $remote = (Invoke-Git -GitArgs @(
-        'remote'
-    ) | Select-Object -First 1)
-
-    if ($null -ne $remote) {
-        $remote = $remote.ToString().Trim()
+    $remoteLines = @(Invoke-Git -GitArgs @('remote'))
+    $remote = if ($remoteLines.Count -gt 0) {
+        $remoteLines[0].ToString().Trim()
+    }
+    else {
+        $null
     }
 }
 catch {
@@ -206,21 +257,21 @@ if ([string]::IsNullOrWhiteSpace($remote)) {
 }
 
 # Show repository details.
+
 Write-Section 'REPOSITORY'
 
 Write-Info 'Name' (Split-Path $repoRoot -Leaf)
 Write-Info 'Branch' $branch
 Write-Info 'Remote' $remote
 
-# Inspect changes.
+# Inspect working tree.
+
 Write-Section 'WORKFLOW'
 
 Write-Status 'Inspecting working tree...' 'INFO'
 
 try {
-    $changes = @(Invoke-Git -GitArgs @(
-        'status', '--porcelain'
-    ))
+    $changes = @(Invoke-Git -GitArgs @('status', '--porcelain'))
 }
 catch {
     Write-Fatal $_.Exception.Message
@@ -229,27 +280,29 @@ catch {
 if ($changes.Count -eq 0) {
     Write-Status 'Working tree is clean. Nothing to commit.' 'WARN'
     Write-Host ''
-    Write-Host '  No changes were staged, committed, or pushed.' `
-        -ForegroundColor Gray
+    Write-Host '  No changes were staged, committed, or pushed.' -ForegroundColor Gray
     exit 0
 }
 
-Write-Status "$($changes.Count) changed file entr$(if ($changes.Count -eq 1) { 'y' } else { 'ies' }) detected." 'OK'
+$entryLabel = if ($changes.Count -eq 1) { 'entry' } else { 'entries' }
+Write-Status "$($changes.Count) changed file $entryLabel detected." 'OK'
+
+# Dry-run preview.
 
 if ($DryRun) {
-    Write-Status 'Dry-run enabled: no files will be staged or committed.' 'WARN'
+    Write-Status 'Dry-run enabled. No changes will be staged or committed.' 'WARN'
 
     foreach ($change in $changes) {
-        Write-Host "    $change" -ForegroundColor DarkGray
+        Write-Host "         $change" -ForegroundColor DarkGray
     }
 
     Write-Host ''
-    Write-Host '  Preview complete. No Git changes were made by GI.' `
-        -ForegroundColor Yellow
+    Write-Host '  Preview complete. No Git changes were made by GI.' -ForegroundColor Yellow
     exit 0
 }
 
-# Stage all changes, including deletions and untracked files.
+# Stage all changes, including new files and deletions.
+
 Write-Status 'Staging changes...' 'INFO'
 
 try {
@@ -261,16 +314,16 @@ catch {
 }
 
 # Commit staged changes.
+
 Write-Status 'Creating commit...' 'INFO'
 
 try {
-    Invoke-Git -GitArgs @(
-        'commit', '-m', $Message
-    ) | Out-Null
+    Invoke-Git -GitArgs @('commit', '-m', $Message) | Out-Null
 
-    $commit = (Invoke-Git -GitArgs @(
-        'rev-parse', '--short', 'HEAD'
-    ) | Select-Object -Last 1).ToString().Trim()
+    $commit = (
+        Invoke-Git -GitArgs @('rev-parse', '--short', 'HEAD') |
+        Select-Object -Last 1
+    ).ToString().Trim()
 
     Write-Status "Commit created: $commit" 'OK'
 }
@@ -278,32 +331,50 @@ catch {
     Write-Fatal $_.Exception.Message
 }
 
-# Push the current branch.
+# Push current branch.
+# Preserve the existing upstream when present; otherwise configure one.
+
 Write-Status "Pushing to $remote/$branch..." 'INFO'
 
 try {
-    $upstream = & git rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>$null
-    $hasUpstream = ($LASTEXITCODE -eq 0)
-
-    if ($hasUpstream) {
+    $upstreamLines = @(
         Invoke-Git -GitArgs @(
-            'push'
-        ) | Out-Null
+            'rev-parse',
+            '--abbrev-ref',
+            '--symbolic-full-name',
+            '@{u}'
+        )
+    )
+
+    $hasUpstream = $upstreamLines.Count -gt 0 -and
+        -not [string]::IsNullOrWhiteSpace($upstreamLines[0].ToString())
+}
+catch {
+    # A missing upstream is expected for a newly created local branch.
+    $hasUpstream = $false
+}
+
+try {
+    if ($hasUpstream) {
+        $pushOutput = @(
+            Invoke-Git -GitArgs @('push', $remote, $branch)
+        )
     }
     else {
-        # Publish the branch and establish its upstream.
-        Invoke-Git -GitArgs @(
-            'push', '-u', $remote, $branch
-        ) | Out-Null
+        $pushOutput = @(
+            Invoke-Git -GitArgs @('push', '-u', $remote, $branch)
+        )
     }
 
+    Show-GitOutput -Lines $pushOutput
     Write-Status 'Push completed successfully.' 'OK'
 }
 catch {
     Write-Fatal $_.Exception.Message
 }
 
-# Final summary.
+# Final summary: reached only after a successful push.
+
 Write-Section 'SUMMARY'
 
 Write-Info 'Commit' $commit
@@ -311,10 +382,7 @@ Write-Info 'Message' $Message
 Write-Info 'Branch' "$remote/$branch"
 
 Write-Host ''
-Write-Host '  +--------------------------------------------------+' `
-    -ForegroundColor Green
-Write-Host '  |  SUCCESS: Changes committed and pushed.          |' `
-    -ForegroundColor Green
-Write-Host '  +--------------------------------------------------+' `
-    -ForegroundColor Green
+Write-Host '  +--------------------------------------------------+' -ForegroundColor Green
+Write-Host '  |  SUCCESS: Changes committed and pushed.          |' -ForegroundColor Green
+Write-Host '  +--------------------------------------------------+' -ForegroundColor Green
 Write-Host ''
