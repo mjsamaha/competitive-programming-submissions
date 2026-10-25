@@ -59,20 +59,31 @@ struct Timer {
 
 void solve() {
     int n;
+    int acount = 0;
+    int dcount = 0;
+
     cin >> n;
-    int count = 0;
+
+    string games;
+
+    cin >> games;
 
     for (int i = 0; i < n; i++){
-        int p, v, t;
-        cin >> p >> v >> t;
-
-        // at least two friends must be confident
-        if (p + v + t >= 2){
-            count++;
+        if (games[i] == 'A'){
+            acount++;
+        } else {
+            dcount++;
         }
     }
 
-    cout << count << '\n';
+    if (acount == dcount){
+        cout << "Friendship";
+    } else if (acount > dcount){
+        cout << "Anton";
+    } else {
+        cout << "Danik";
+    }
+
 }
 
 int main() {
