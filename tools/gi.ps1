@@ -134,13 +134,9 @@ function Invoke-Git {
         [string[]]$GitArgs
     )
 
-    # PowerShell 7.3+ can convert native stderr into terminating
-    # errors when native-command error preference is enabled.
-    # Temporarily disable that behavior so we can inspect Git's
-    # actual exit code and capture the complete diagnostic output.
-
+    # Preserve the caller's native-command error preference.
     $hasNativePreference = Test-Path variable:PSNativeCommandUseErrorActionPreference
-    $previousNativePreference = $false
+    $previousNativePreference = $null
 
     if ($hasNativePreference) {
         $previousNativePreference = $PSNativeCommandUseErrorActionPreference
@@ -148,11 +144,33 @@ function Invoke-Git {
     }
 
     try {
+        # Capture stdout and stderr together, then check Git's exit code.
         $output = @(& git @GitArgs 2>&1)
         $exitCode = $LASTEXITCODE
+
+        $lines = @(
+            foreach ($item in $output) {
+                if ($null -ne $item) {
+                    $item.ToString()
+                }
+            }
+        )
+
+        if ($exitCode -ne 0) {
+            $details = $lines -join [Environment]::NewLine
+
+            if ([string]::IsNullOrWhiteSpace($details)) {
+                $details = "Git exited with code $exitCode."
+            }
+
+            throw "git $($GitArgs -join ' ') failed (exit code ${exitCode}).`n$details"
+        }
+
+        return $lines
     }
     catch {
-        throw "Unable to execute Git.`n$($_.Exception.Message)"
+        # Preserve Git errors instead of disguising them as launch failures.
+        throw
     }
     finally {
         if ($hasNativePreference) {
