@@ -18,7 +18,7 @@ $ErrorActionPreference = 'Stop'
 # ============================================================
 
 $script:AppName  = 'GI'
-$script:Version = '1.1.0'
+$script:Version = '1.1.1'
 
 # ------------------------------------------------------------
 # Console UI
@@ -127,14 +127,15 @@ function Show-Help {
 # ------------------------------------------------------------
 # Git command execution
 # ------------------------------------------------------------
-
 function Invoke-Git {
     param(
         [Parameter(Mandatory)]
         [string[]]$GitArgs
     )
 
-    # Preserve the caller's native-command error preference.
+    $previousErrorPreference = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+
     $hasNativePreference = Test-Path variable:PSNativeCommandUseErrorActionPreference
     $previousNativePreference = $null
 
@@ -144,7 +145,6 @@ function Invoke-Git {
     }
 
     try {
-        # Capture stdout and stderr together, then check Git's exit code.
         $output = @(& git @GitArgs 2>&1)
         $exitCode = $LASTEXITCODE
 
@@ -168,35 +168,14 @@ function Invoke-Git {
 
         return $lines
     }
-    catch {
-        # Preserve Git errors instead of disguising them as launch failures.
-        throw
-    }
     finally {
+        $ErrorActionPreference = $previousErrorPreference
+
         if ($hasNativePreference) {
             $PSNativeCommandUseErrorActionPreference = $previousNativePreference
         }
     }
 
-    $lines = @(
-        $output | ForEach-Object {
-            if ($null -ne $_) {
-                $_.ToString()
-            }
-        }
-    )
-
-    if ($exitCode -ne 0) {
-        $details = $lines -join [Environment]::NewLine
-
-        if ([string]::IsNullOrWhiteSpace($details)) {
-            $details = "Git exited with code $exitCode."
-        }
-
-        throw "git $($GitArgs -join ' ') failed (exit code $exitCode).`n$details"
-    }
-
-    return $lines
 }
 
 function Show-GitOutput {
@@ -372,24 +351,42 @@ catch {
     $hasUpstream = $false
 }
 
+$previousErrorPreference = $ErrorActionPreference
+$ErrorActionPreference = 'Continue'
+
+$hasNativePreference = Test-Path variable:PSNativeCommandUseErrorActionPreference
+$previousNativePreference = $null
+
+if ($hasNativePreference) {
+    $previousNativePreference = $PSNativeCommandUseErrorActionPreference
+    $PSNativeCommandUseErrorActionPreference = $false
+}
+
 try {
+    # Do not merge stderr into the PowerShell error stream here. Git commonly
+    # writes normal push progress to stderr, which can look like a failure.
     if ($hasUpstream) {
-        $pushOutput = @(
-            Invoke-Git -GitArgs @('push', $remote, $branch)
-        )
+        & git push $remote $branch
     }
     else {
-        $pushOutput = @(
-            Invoke-Git -GitArgs @('push', '-u', $remote, $branch)
-        )
+        & git push -u $remote $branch
     }
 
-    Show-GitOutput -Lines $pushOutput
-    Write-Status 'Push completed successfully.' 'OK'
+    $pushExitCode = $LASTEXITCODE
 }
-catch {
-    Write-Fatal $_.Exception.Message
+finally {
+    $ErrorActionPreference = $previousErrorPreference
+
+    if ($hasNativePreference) {
+        $PSNativeCommandUseErrorActionPreference = $previousNativePreference
+    }
 }
+
+if ($pushExitCode -ne 0) {
+    Write-Fatal "git push failed (exit code $pushExitCode). Check the Git output above."
+}
+
+Write-Status 'Push completed successfully.' 'OK'
 
 # Final summary: reached only after a successful push.
 
