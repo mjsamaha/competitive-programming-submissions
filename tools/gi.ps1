@@ -33,7 +33,7 @@ function Write-Header {
     Write-Host '  |  Automated Git workflow                          |' -ForegroundColor DarkCyan
     Write-Host '  +--------------------------------------------------+' -ForegroundColor DarkCyan
     Write-Host ''
-    Write-Host '  Author: lobsterchops'
+    Write-Host '  Author: lobsterchops | Date: 2026-10-24'
 }
 
 function Write-Section {
