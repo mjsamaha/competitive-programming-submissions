@@ -366,10 +366,10 @@ try {
     # Do not merge stderr into the PowerShell error stream here. Git commonly
     # writes normal push progress to stderr, which can look like a failure.
     if ($hasUpstream) {
-        & git push $remote $branch
+        & git push --quiet $remote $branch
     }
     else {
-        & git push -u $remote $branch
+        & git push --quiet -u $remote $branch
     }
 
     $pushExitCode = $LASTEXITCODE
